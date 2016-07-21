@@ -3,7 +3,7 @@
             [clojure.tools.logging :as log]
             [puppetlabs.pcp.broker.service :refer [broker-service]]
             [puppetlabs.pcp.client :as client]
-            [puppetlabs.pcp.message :as message]
+            [puppetlabs.pcp.message-v2 :as message]
             [puppetlabs.trapperkeeper.services.authorization.authorization-service :refer [authorization-service]]
             [puppetlabs.trapperkeeper.services.metrics.metrics-service :refer [metrics-service]]
             [puppetlabs.trapperkeeper.services.status.status-service :refer [status-service]]
@@ -34,8 +34,8 @@
                :ssl-crl-path "./test-resources/ssl/ca/ca_crl.pem"}
 
    :web-router-service
-   {:puppetlabs.pcp.broker.service/broker-service {:v1 "/pcp"
-                                                   :vNext "/pcp/vNext"
+   {:puppetlabs.pcp.broker.service/broker-service {:v1 "/pcp/v1"
+                                                   :vNext "/pcp"
                                                    :metrics "/"}
     :puppetlabs.trapperkeeper.services.status.status-service/status-service "/status"}
 
@@ -180,4 +180,4 @@
                 associated (client/wait-for-association client 1000)]
             (is connected)
             (is (not associated))
-            (is (logged? #"WebSocket closed 1009 Binary message size \[289\] exceeds maximum size \[128\]" :debug))))))))
+            (is (logged? #"WebSocket closed 1009 Binary message size \[342\] exceeds maximum size \[128\]" :debug))))))))

@@ -1,8 +1,8 @@
 (ns puppetlabs.pcp.client
   (:require [clojure.tools.logging :as log]
             [gniazdo.core :as ws]
-            [puppetlabs.pcp.message :as message :refer [Message]]
-            [puppetlabs.pcp.protocol :as p]
+            [puppetlabs.pcp.message-v2 :as message :refer [Message]]
+            [puppetlabs.pcp.protocol-v2 :as p]
             [puppetlabs.ssl-utils.core :as ssl-utils]
             [schema.core :as s]
             [puppetlabs.i18n.core :as i18n])
