@@ -97,7 +97,8 @@
           (is (= expected-data (String. (message/get-data @received) "UTF-8")))
           (is (= (:id message) (:id @received)))
           (is (= (:message_type message) (:message_type @received)))
-          (is (= (:expires message) (:expires @received)))
+          (is (< 0 (:ttl @received)))
+          (is (> (:ttl message) (:ttl @received)))
           (is (= (:targets message) (:targets @received)))
           (is (= "pcp://client01.example.com/demo-client" (:sender @received))))))))
 
@@ -180,4 +181,4 @@
                 associated (client/wait-for-association client 1000)]
             (is connected)
             (is (not associated))
-            (is (logged? #"WebSocket closed 1009 Binary message size \[342\] exceeds maximum size \[128\]" :debug))))))))
+            (is (logged? #"WebSocket closed 1009 Binary message size \[316\] exceeds maximum size \[128\]" :debug))))))))
