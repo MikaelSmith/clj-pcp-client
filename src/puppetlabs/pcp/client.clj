@@ -1,16 +1,34 @@
 (ns puppetlabs.pcp.client
   (:require [clojure.tools.logging :as log]
             [gniazdo.core :as ws]
-            [puppetlabs.pcp.message :as message :refer [Message]]
-            [puppetlabs.pcp.protocol :as p]
             [puppetlabs.ssl-utils.core :as ssl-utils]
             [schema.core :as s]
+            [cheshire.core :as cheshire]
             [puppetlabs.i18n.core :as i18n])
   (:use [slingshot.slingshot :only [throw+ try+]])
   (:import  (clojure.lang Atom)
             (java.nio ByteBuffer)
             (org.eclipse.jetty.websocket.client WebSocketClient)
             (org.eclipse.jetty.util.ssl SslContextFactory)))
+
+(def Message
+  "Defines the message format."
+  {(s/optional-key :target) s/Str
+   (s/optional-key :sender) s/Str
+   :message_type            s/Str
+   :data                    s/Any})
+
+(def InventoryRequest
+   "Data schema for http://puppetlabs.com/inventory_request"
+   [s/Str])
+
+(def InventoryResponse
+  "Data schema for http://puppetlabs.com/inventory_response"
+  [s/Str])
+
+(def ErrorMessage
+  "Data schema for http://puppetlabs.com/error_message"
+  s/Str)
 
 (defprotocol ClientInterface
   "client interface - make one with connect"
@@ -19,26 +37,13 @@
   (connected? [client]
     "Returns true if the client is currently connected to the pcp-broker.
     Propagates any unhandled exception thrown while attempting to connect.")
-  (associating? [client]
-    "Returns true if the client has not yet recieved an association response")
-  (associated? [client]
-    "Returns true if the client has been successfully assocated with a broker")
   (wait-for-connection [client timeout-ms]
     "Wait up to timeout-ms for a connection to be established.
     Returns the client if the connection has been established, else nil.
     Propagates any unhandled exception thrown while attempting to connect.")
-  (wait-for-association [client timeout-ms]
-    "Wait up to timeout-ms for a connection to be associated. Returns the client if
-    the connection has been associated, else nil.
-
-     NOTE: There are two ways assocation may fail, we may not have
-     recieved an association response in the timeout specified, or the
-     association request may have been denied. Check associating? and
-     associated? if you are interested in detecting the difference.")
   (send! [client message]
     "Send a message across the currently connected client. Will
-    raise ::not-associated if the client is not currently associated with the
-    pcp-broker, and ::not-connected if the client has become disconnected from
+    raise ::not-connected if the client has become disconnected from
     the pcp-broker.")
   (close [client]
     "Close the connection. Once the client is close you will need a
@@ -62,28 +67,19 @@
 ;; forward declare implementations of protocol functions. We prefix
 ;; with the dash so they're not clashing with the versions defined by
 ;; ClientInterface
-(declare -connecting? -connected?
-         -associating? -associated?
-         -wait-for-connection -wait-for-association -send! -close
-         -start-heartbeat-thread)
+(declare -connecting? -connected?  -wait-for-connection -send! -close -start-heartbeat-thread)
 
 (s/defrecord Client
   [server :- s/Str
-   identity :- p/Uri
    handlers :- Handlers
    should-stop ;; promise that when delivered means should stop
    websocket-connection ;; atom of a promise that will be a connection or true
    websocket-client
-   associate-response ;; atom of a promise that will be a boolean
    ]
-  {(s/optional-key :user-data) s/Any} ;; a field for user data
   ClientInterface
   (connecting? [client] (-connecting? client))
   (connected? [client] (-connected? client))
-  (associating? [client] (-associating? client))
-  (associated? [client] (-associated? client))
   (wait-for-connection [client timeout] (-wait-for-connection client timeout))
-  (wait-for-association [client timeout] (-wait-for-association client timeout))
   (send! [client message] (-send! client message))
   (close [client] (-close client))
   (start-heartbeat-thread [client] (-start-heartbeat-thread client)))
@@ -105,33 +101,6 @@
         (log/debug exception (i18n/trs "exception while establishing a connection; not connected"))
         false))))
 
-(s/defn ^:private -associating? :- s/Bool
-  [client :- Client]
-  (let [{:keys [associate-response]} client]
-    (not (realized? @associate-response))))
-
-(s/defn ^:private -associated? :- s/Bool
-  [client :- Client]
-  (let [{:keys [associate-response]} client]
-    (and (realized? @associate-response) @@associate-response)))
-
-(s/defn ^:private session-association-message :- Message
-  [client :- Client]
-  (let [{:keys [identity]} client]
-    (-> (message/make-message :message_type "http://puppetlabs.com/associate_request"
-                              :sender identity
-                              :targets ["pcp:///server"])
-        (message/set-expiry 3 :seconds))))
-
-(s/defn ^:private associate-response-handler
-  [client :- Client message :- Message]
-  (let [data (message/get-json-data message)
-        {:keys [success]} data
-        {:keys [associate-response]} client]
-    (s/validate p/AssociateResponse data)
-    (log/debug (i18n/trs "Received associate_response message {0} {1}" message data))
-    (deliver @associate-response success)))
-
 (s/defn ^:private fallback-handler
   "The handler to use when no handler matches"
   [client :- Client message :- Message]
@@ -145,18 +114,6 @@
                     (get handlers :default)
                     fallback-handler)]
     (handler client message)))
-
-(s/defn ^:private make-identity :- p/Uri
-  "extracts the common name from the named certificate and forms a PCP
-  Uri with it and the supplied type"
-  [certificate type]
-  (let [x509-chain (ssl-utils/pem->certs certificate)]
-    (when (empty? x509-chain)
-      (throw (IllegalArgumentException.
-               (i18n/trs "{0} must contain at least 1 certificate" certificate))))
-    (let [cn       (ssl-utils/get-cn-from-x509-certificate (first x509-chain))
-          identity (format "pcp://%s/%s" cn type)]
-      identity)))
 
 (s/defn ^:private heartbeat
   "Provides the WebSocket heartbeat task that sends pings over the
@@ -199,11 +156,7 @@
             (ws/connect server
                         :client websocket-client
                         :on-connect (fn [session]
-                                      (log/debug (i18n/trs "WebSocket connected"))
-                                      (let [message (session-association-message client)
-                                            buffer  (ByteBuffer/wrap (message/encode message))]
-                                        (.. session (getRemote) (sendBytes buffer)))
-                                      (log/debug (i18n/trs "Sent associate session request")))
+                                      (log/debug (i18n/trs "WebSocket connected")))
                         :on-error (fn [error]
                                     (log/error error (i18n/trs "WebSocket error")))
                         :on-close (fn [code message]
@@ -219,12 +172,9 @@
                                         (reset! websocket-connection (future true)))))
                         :on-receive (fn [text]
                                       (log/debug (i18n/trs "Received text message"))
-                                      (dispatch-message client (message/decode (message/string->bytes text))))
+                                      (dispatch-message client (cheshire/parse-string text true)))
                         :on-binary (fn [buffer offset count]
-                                     (let [message (message/decode buffer)]
-                                       (log/debug (i18n/trs "Received bin message - offset/bytes: {0}/{1} - message: {2}"
-                                                            offset count message))
-                                       (dispatch-message client message))))
+                                     (log/debug (i18n/trs "Received bin message - offset/bytes: {0}/{1}" offset count))))
             (catch javax.net.ssl.SSLHandshakeException exception
               (log/warn exception (i18n/trs "TLS Handshake failed. Sleeping for up to {0} ms to retry" retry-sleep))
               (deref should-stop retry-sleep nil))
@@ -253,26 +203,15 @@
         (log/debug exception (i18n/trs "exception while waiting for a connection; not connected"))
         nil))))
 
-(s/defn -wait-for-association :- (s/maybe Client)
-  "Waits until a client is associated. If timeout is hit, or the association doesn't work, returns falsey"
-  [client :- Client timeout :- s/Num]
-  (let [{:keys [associate-response]} client]
-    (if (deref @associate-response timeout nil)
-      client
-      nil)))
-
 (s/defn ^:private -send! :- s/Bool
   "Send a message across the websocket session"
-  [client :- Client message :- message/Message]
-  (let [{:keys [identity websocket-connection]} client]
-    (if-not (-associated? client)
-      (throw+ {:type ::not-associated})
-      (try
-        (ws/send-msg @@websocket-connection
-                     (message/encode (assoc message :sender identity)))
-        (catch java.util.concurrent.ExecutionException exception
-          (log/debug exception (i18n/trs "exception on the connection while attempting to send a message"))
-          (throw+ {:type :not-connected}))))
+  [client :- Client message :- Message]
+  (let [{:keys [websocket-connection]} client]
+    (try
+      (ws/send-msg @@websocket-connection (cheshire/generate-string message))
+      (catch java.util.concurrent.ExecutionException exception
+        (log/debug exception (i18n/trs "exception on the connection while attempting to send a message"))
+        (throw+ {:type :not-connected})))
     true))
 
 (s/defn -close :- s/Bool
@@ -299,8 +238,6 @@
    :cacert s/Str
    :cert s/Str
    :private-key s/Str
-   :type s/Str
-   (s/optional-key :user-data) s/Any
    (s/optional-key :max-message-size) s/Int})
 
 ;; private helpers for the ssl/websockets setup
@@ -332,16 +269,12 @@
    The certificate file specified can provide either a single certificate,
    or a certificate chain (with the first entry being the client's certificate)."
   [params :- ConnectParams handlers :- Handlers]
-  (let [{:keys [cert type server user-data]} params
+  (let [{:keys [cert server]} params
         client (map->Client {:server server
-                             :identity (make-identity cert type)
                              :websocket-client (make-websocket-client params)
                              :websocket-connection (atom (future true))
-                             :associate-response (atom (promise))
-                             :handlers (assoc handlers
-                                              "http://puppetlabs.com/associate_response" associate-response-handler)
-                             :should-stop (promise)
-                             :user-data user-data})
+                             :handlers handlers
+                             :should-stop (promise)})
         {:keys [websocket-connection]} client]
     (reset! websocket-connection (future (make-connection client)))
     client))

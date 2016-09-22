@@ -22,15 +22,7 @@ msgid "exception while establishing a connection; not connected"
 msgstr ""
 
 #: src/puppetlabs/pcp/client.clj
-msgid "Received associate_response message {0} {1}"
-msgstr ""
-
-#: src/puppetlabs/pcp/client.clj
 msgid "No handler for {0}"
-msgstr ""
-
-#: src/puppetlabs/pcp/client.clj
-msgid "{0} must contain at least 1 certificate"
 msgstr ""
 
 #: src/puppetlabs/pcp/client.clj
@@ -58,10 +50,6 @@ msgid "WebSocket connected"
 msgstr ""
 
 #: src/puppetlabs/pcp/client.clj
-msgid "Sent associate session request"
-msgstr ""
-
-#: src/puppetlabs/pcp/client.clj
 msgid "WebSocket error"
 msgstr ""
 
@@ -79,7 +67,7 @@ msgid "Received text message"
 msgstr ""
 
 #: src/puppetlabs/pcp/client.clj
-msgid "Received bin message - offset/bytes: {0}/{1} - message: {2}"
+msgid "Received bin message - offset/bytes: {0}/{1}"
 msgstr ""
 
 #: src/puppetlabs/pcp/client.clj

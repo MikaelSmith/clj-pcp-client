@@ -1,4 +1,4 @@
-(def tk-version "1.4.0")
+(def tk-version "1.5.0")
 (def ks-version "1.3.0")
 (def i18n-version "0.4.3")
 
@@ -15,14 +15,13 @@
 
                  ;; Transitive dependency for:
                  ;;  - puppetlabs/ssl-utils
-                 ;;  - puppetlabs/pcp-common
                  ;;  - puppetlabs/trapperkeeper-authorization (via puppetlabs/pcp-broker)
                  [clj-time "0.10.0"]
 
                  [puppetlabs/ssl-utils "0.8.1"]
-                 [puppetlabs/pcp-common "0.5.4"]
                  [puppetlabs/kitchensink "1.3.0"]
                  [prismatic/schema "1.0.4"]
+                 [cheshire "5.5.0"]
 
                  ;; Transitive dependencies on jetty for stylefuits/gniazdo
                  ;; to use a stable jetty release (gniazdo specifies 9.3.0M1)
@@ -48,7 +47,7 @@
 
   :test-paths ["test" "test-resources"]
 
-  :profiles {:dev {:dependencies [[puppetlabs/pcp-broker "0.8.1"]
+  :profiles {:dev {:dependencies [[puppetlabs/pcp-broker "0.8.2-SNAPSHOT"]
                                   [puppetlabs/trapperkeeper ~tk-version]
                                   [puppetlabs/trapperkeeper ~tk-version :classifier "test" :scope "test"]
                                   [puppetlabs/kitchensink ~ks-version :classifier "test" :scope "test"]]}
